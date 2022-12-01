@@ -1,0 +1,65 @@
+# edgeR analysis
+library("edgeR")
+library(multiMiR)
+library(dplyr)
+library(writexl)
+rm(list=ls())
+BioCC_input = read.table("/path/to/featCounts.txt",sep='\t',header=TRUE)
+head(BioCC_input)
+rownames(BioCC_input) <- BioCC_input[,1]
+BioCC_input[,1:6] <- NULL
+head(BioCC_input)
+ls()
+BioCC_input_zero_filt <- BioCC_input[rowSums(BioCC_input == 0) <= 6,]
+Medians = numeric()
+for (i in 1:nrow(BioCC_input_zero_filt)){
+  Medians[i] <- median(as.numeric(BioCC_input_zero_filt[i,]))
+}
+BioCC_final <- BioCC_input_zero_filt[Medians>=1,]
+rpk <- BioCC_final
+dim(rpk)
+head(rpk)
+# Group files by either read or control
+Groups <- as.factor(c(rep("read",2),rep("Ctrl",1)))
+Groups
+# Using trended dispersions
+rpk.norm.g <- DGEList(counts=rpk,group=Groups)
+rpk.norm.g <- calcNormFactors(rpk.norm.g)
+norm.counts.rpk.g <- cpm(rpk.norm.g)
+head(norm.counts.rpk.g)
+dim(norm.counts.rpk.g)
+plotMDS(rpk.norm.g,top=nrow(norm.counts.rpk.g),gene.selection = "common")
+[20]: plotMDS(rpk.norm.g,top=500,gene.selection = "common")
+plotMDS(rpk.norm.g,top=500,gene.selection = "common")
+design.mat = model.matrix(~ 0 + Groups)
+design.mat
+rpk.norm.g <- estimateDisp(rpk.norm.g,design.mat)
+names(rpk.norm.g)
+mean(rpk.norm.g$tagwise.dispersion)
+plotBCV(rpk.norm.g)
+# Fit GLM model
+fit <- glmFit(rpk.norm.g,design.mat)
+Ctrlvread <- makeContrasts(GroupsCtrl-Groupsread,levels=design.mat)
+readvCtrl <- makeContrasts(Groupsread-GroupsCtrl,levels=design.mat)
+read_lrt <- glmLRT(fit,contrast = readvCtrl)
+# Table of unadjusted p-values (PValue) and FDR values
+DGE_read_lrt <- topTags(read_lrt,n=Inf,adjust.method = "BH")
+# Getting top differentially expressed miRNAs
+top_miRNAs <- rownames(DGE_read_lrt$table)[1:10]
+top_miRNAs
+# Plug miRNAs into multiMiR and get validated targets
+multimir_results <- get_multimir(org     = 'hsa',
+                                 mirna   = top_miRNAs,
+                                 table   = 'validated',
+                                 summary = TRUE)
+# Parse multimir_results for unique miRNAs
+multimir_results_data <- as.data.frame(multimir_results@data)
+unique_top10mirnas <- multimir_results@data %>% distinct(mature_mirna_id, .keep_all = TRUE)
+as.data.frame(unique_top10mirnas)
+write_xlsx(unique_top10mirnas, "/path/to/unique_top10mirnas")
+# Display first 10 hits
+head(multimir_results@data, n=10)
+# Print top 100 hits
+print.data.frame(multimir_results@data)
+# To convert dispersion plot to csv for GO Ontology
+write.csv(multimir_results@data, "/path/to/multimir_dispersion.csv")
