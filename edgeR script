@@ -1,0 +1,107 @@
+# edgeR analysis
+library("edgeR")
+rm(list=ls())
+BioCC_input = read.table("/path/to/featCounts.txt",sep='\t',header=TRUE)
+head(BioCC_input)
+rownames(BioCC_input) <- BioCC_input[,1]
+BioCC_input[,1:6] <- NULL
+head(BioCC_input)
+ls()
+BioCC_input_zero_filt <- BioCC_input[rowSums(BioCC_input == 0) <= 6,]
+Medians = numeric()
+for (i in 1:nrow(BioCC_input_zero_filt)){
+  Medians[i] <- median(as.numeric(BioCC_input_zero_filt[i,]))
+}
+BioCC_final <- BioCC_input_zero_filt[Medians>=1,]
+rpk <- BioCC_final
+dim(rpk)
+head(rpk)
+# Group each file into either Ctrl or read
+Groups <- as.factor(c(rep("read",2),rep("Ctrl",1)))
+Groups
+rpk.norm.g <- DGEList(counts=rpk,group=Groups)
+rpk.norm.g <- calcNormFactors(rpk.norm.g)
+norm.counts.rpk.g <- cpm(rpk.norm.g)
+head(norm.counts.rpk.g)
+dim(norm.counts.rpk.g)
+plotMDS(rpk.norm.g,top=nrow(norm.counts.rpk.g),gene.selection = "common")
+[20]: plotMDS(rpk.norm.g,top=500,gene.selection = "common")
+plotMDS(rpk.norm.g,top=500,gene.selection = "common")
+design.mat = model.matrix(~ 0 + Groups)
+design.mat
+rpk.norm.g <- estimateDisp(rpk.norm.g,design.mat)
+names(rpk.norm.g)
+mean(rpk.norm.g$tagwise.dispersion)
+plotBCV(rpk.norm.g)
+fit <- glmFit(rpk.norm.g,design.mat)
+Ctrlvread <- makeContrasts(GroupsCtrl-Groupsread,levels=design.mat)
+readvCtrl <- makeContrasts(Groupsread-GroupsCtrl,levels=design.mat)
+read_lrt <- glmLRT(fit,contrast = readvCtrl)
+DGE_read_lrt <- topTags(read_lrt,n=Inf)
+topTags(read_lrt)
+summary(dt_read_lrt<-decideTestsDGE(read_lrt,p.value = 0.05))
+
+# Volcano Plot
+# Load ggplot
+library(ggplot2)
+library(ggrepel)
+library(dplyr)
+# Convert dispersion plot to data frame
+df <- as.data.frame(read_lrt)
+# Filter by logCPM > 1.5
+filt_df <- df %>% filter(logCPM > 1.5)
+# Basic scatter plot: x is "logFC" and y is "PValue"
+ggplot(data=filt_df, aes(x=logFC, y=PValue)) + geom_point()
+# Convert directly in the aes()
+p <- ggplot(data=filt_df, aes(x=logFC, y=-log10(PValue))) + geom_point()
+# Add more simple "theme"
+p <- ggplot(data=filt_df, aes(x=logFC, y=-log10(PValue))) + geom_point() + theme_minimal()
+# Add vertical lines for logFC thresholds and one horizontal line for PValue threshold
+p2 <- p + geom_vline(xintercept=c(-2.0, 2.0), col="red") +
+  geom_hline(yintercept=-log10(0.05), col="red")
+# The significantly differentially expressed genes are the ones found in the upper-left and upper-right corners.
+# Add a column to the data frame to specify if they are UP- or DOWN- regulated (logFC respectively positive or negative)
+write.csv(filt_df, "featCounts.csv")
+filt_df <- read.table("/path/to/featCounts.csv", sep = ",", header = TRUE)
+# Add a column of NAs
+filt_df$diffexpressed <- "NO"
+# If logFC > 0.6 and PValue < 0.05, set as "UP"
+filt_df$diffexpressed[filt_df$logFC > 2.0 & filt_df$PValue < 0.05] <- "UP"
+# If logFC < -0.6 and PValue < 0.05, set as "DOWN"
+filt_df$diffexpressed[filt_df$logFC < -2.0 & filt_df$PValue < 0.05] <- "DOWN"
+# Re-plot but this time color the points with "diffexpressed"
+p <- ggplot(data=filt_df, aes(x=logFC, y=-log10(PValue), col=diffexpressed)) + geom_point() + theme_minimal()
+# Add lines as before...
+p2 <- p + geom_vline(xintercept=c(-2.0, 2.0), col="red") +
+  geom_hline(yintercept=-log10(0.05), col="red")
+## Change point color
+# 1. by default, it is assigned to the categories in an alphabetical order):
+p3 <- p2 + scale_color_manual(values=c("blue", "black", "red"))
+# 2. to automate a bit: create a named vector: the values are the colors to be used, the names are the categories they will be assigned to:
+mycolors <- c("purple", "orange", "black")
+names(mycolors) <- c("DOWN", "UP", "NO")
+p3 <- p2 + scale_color_manual(values = mycolors)
+# Now write down the name of genes beside the points...
+# Create a new column "delabel" to de, that will contain the name of genes differentially expressed (NA in case they are not)
+filt_df$delabel <- NA
+filt_df$delabel[filt_df$diffexpressed != "NO"] <- filt_df$X[filt_df$diffexpressed != "NO"]
+ggplot(data=filt_df, aes(x=logFC, y=-log10(PValue), col=diffexpressed, label=delabel)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text()
+# Finally, we can organize the labels nicely using the "ggrepel" package and geom_text_repel () function
+# Load library
+library(ggrepel)
+options(ggrepel.max.overlaps = Inf)
+# Plot adding up all layers we have seen so far
+ggplot(data=filt_df, aes(x=logFC, y=-log10(PValue), col=diffexpressed, label=delabel)) +
+  geom_point() +
+  theme_minimal() +
+  geom_text_repel(max.overlaps = 5, min.segment.length = 0) +
+  scale_color_manual(values=c("purple", "black", "orange")) +
+  geom_vline(xintercept=c(-2.0, 2.0), col="red") +
+  geom_hline(yintercept=-log10(0.05), col="red") +
+  ggtitle("Differential Expression of microRNAs") +
+  theme(plot.title = element_text(hjust = 0.5))
+# To convert dispersion plot to csv for GO Ontology
+write.csv(DGE_read_lrt, "/path/to/featCounts_dispersion.csv")
